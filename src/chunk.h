@@ -2,6 +2,7 @@
 #define clox_chunk_h
 
 #include "common.h"
+#include "value.h"
 
 /**
  * In our bytecode format, each instruction has a one-byte operation code
@@ -9,6 +10,8 @@
  * instruction we're dealing with: add, subtract, lookup variable, etc.
  * */
 typedef enum {
+  OP_CONSTANT, // Needs an *operand* to know which constant to load, i.e.
+               // parameterizing what the instruction does.
   OP_RETURN,
 } OpCode;
 
@@ -24,9 +27,12 @@ typedef struct {
   int count;
   int capacity;
   uint8_t *code;
+  int *lines;
+  ValueArray constants;
 } Chunk;
 void initChunk(Chunk *chunk);
 void freeChunk(Chunk *chunk);
-void writeChunk(Chunk *chunk, u_int8_t byte);
+void writeChunk(Chunk *chunk, u_int8_t byte, int line);
+int addConstant(Chunk *chunk, Value value);
 
 #endif
