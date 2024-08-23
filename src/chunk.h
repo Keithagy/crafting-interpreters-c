@@ -2,6 +2,7 @@
 #define clox_chunk_h
 
 #include "common.h"
+#include "line.h"
 #include "value.h"
 
 /**
@@ -27,7 +28,7 @@ typedef struct {
   int count;
   int capacity;
   uint8_t *code;
-  int *lines;
+  LineInstructionCountArray lines;
   ValueArray constants;
 } Chunk;
 void initChunk(Chunk *chunk);
