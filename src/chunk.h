@@ -13,6 +13,11 @@
 typedef enum {
   OP_CONSTANT, // Needs an *operand* to know which constant to load, i.e.
                // parameterizing what the instruction does.
+  OP_NEGATE,
+  OP_ADD,
+  OP_SUBTRACT,
+  OP_MULTIPLY,
+  OP_DIVIDE,
   OP_RETURN,
 } OpCode;
 

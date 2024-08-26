@@ -14,7 +14,7 @@ typedef struct {
   // because it's faster to dereference a pointer than look up an element in an
   // array by index.
   uint8_t *ip; // >> instruction pointer, points to the next instruction, not
-               // the one currently being handled
+  // the one currently being handled
   Value stack[STACK_MAX];
   Value *stackTop; // C does allow for array pointer to point just past end of
                    // array
