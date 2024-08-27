@@ -1,31 +1,186 @@
 #include <stdio.h>
+#include <stdlib.h>
 
+#include "chunk.h"
 #include "common.h"
 #include "compiler.h"
 #include "scanner.h"
 
-void compile(const char *source) {
-  initScanner(source);
-  int line = -1;
-  for (;;) {
-    Token token = scanToken();
-    if (token.line != line) {
-      printf("%4d ", token.line);
-      line = token.line;
-    } else {
-      printf("   | ");
-    }
+typedef struct {
+  Token current;
+  Token previous;
+  bool hadError;
+  bool panicMode;
+} Parser;
 
-    //  That %.*s in the format string is a neat feature. Usually, you set the
-    //  output precision —- the number of characters to show -- by placing a
-    //  number inside the format string. Using * instead lets you pass the
-    //  precision as an argument. So that printf() call prints the first
-    //  token.length characters of the string at token.start. We need to limit
-    //  the length like that because the lexeme points into the original source
-    //  string and doesn’t have a terminator at the end.
-    printf("%2d '%.*s'\n", token.type, token.length, token.start);
-    if (token.type == TOKEN_EOF) {
+typedef enum {
+  PREC_NONE,
+  PREC_ASSIGNMENT, // =
+  PREC_OR,         // or
+  PREC_AND,        // and
+  PREC_EQUALITY,   // == !=
+  PREC_COMPARISON, // < > <= >=
+  PREC_TERM,       // + -
+  PREC_FACTOR,     // * /
+  PREC_UNARY,      // ! -
+  PREC_CALL,       // . ()
+  PREC_PRIMARY
+} Precedence;
+
+Parser parser;
+Chunk *compilingChunk;
+
+static Chunk *currentChunk() { return compilingChunk; }
+
+static void errorAt(Token *token, const char *message) {
+  if (parser.panicMode) {
+    return;
+  }
+  parser.panicMode = true;
+  fprintf(stderr, "[line %d] Error", token->line);
+
+  if (token->type == TOKEN_EOF) {
+    fprintf(stderr, " at end");
+  } else if (token->type == TOKEN_ERROR) {
+    // Nothing.
+  } else {
+    fprintf(stderr, " at '%.*s'", token->length, token->start);
+  }
+
+  fprintf(stderr, ": %s\n", message);
+  parser.hadError = true;
+}
+
+static void error(const char *message) { errorAt(&parser.previous, message); }
+
+static void errorAtCurrent(const char *message) {
+  errorAt(&parser.current, message);
+}
+
+static void advance() {
+  parser.previous = parser.current;
+  for (;;) {
+    parser.current = scanToken();
+    if (parser.current.type != TOKEN_ERROR) {
       break;
     }
+    errorAtCurrent(parser.current.start);
   }
+}
+
+static void consume(TokenType type, const char *message) {
+  if (parser.current.type == type) {
+    advance();
+    return;
+  }
+  errorAtCurrent(message);
+}
+
+static void emitByte(uint8_t byte) {
+  writeChunk(currentChunk(), byte, parser.previous.line);
+}
+static void emitBytes(uint8_t byte1, uint8_t byte2) {
+  emitByte(byte1);
+  emitByte(byte2);
+}
+
+static void emitReturn() { emitByte(OP_RETURN); }
+static void endCompiler() { emitReturn(); }
+
+static void binary() {
+  TokenType operatorType = parser.previous.type;
+  ParseRule *rule = getRule(operatorType);
+
+  // We use one higher level of precedence for the right operand because the
+  // binary operators are left-associative.
+  // Given a series of the same operator, like:
+  // 1 + 2 + 3 + 4
+  // We want to parse it like:
+  // ((1 + 2) + 3) + 4
+  // Thus, when parsing the right-hand operand to the first +, we want to
+  // consume the 2, but not the rest, so we use one level above +’s precedence.
+  // But if our operator was right-associative, this would be wrong.
+  // Given:
+  // a = b = c = d
+  // Since assignment is right-associative, we want to parse it as:
+  // a = (b = (c = d))
+  // To enable that, we would call parsePrecedence() with the
+  // *same* precedence as the current operator.
+  parsePrecedence((Precedence)(rule->precedence + 1));
+
+  switch (operatorType) {
+  case TOKEN_PLUS:
+    emitByte(OP_ADD);
+    break;
+  case TOKEN_MINUS:
+    emitByte(OP_SUBTRACT);
+    break;
+  case TOKEN_STAR:
+    emitByte(OP_MULTIPLY);
+    break;
+  case TOKEN_SLASH:
+    emitByte(OP_DIVIDE);
+    break;
+  default:
+    return; // Unreachable.
+  }
+}
+
+static void parsePrecedence(Precedence precedence) {}
+static void expression() { parsePrecedence(PREC_ASSIGNMENT); }
+
+/// As far as the back end is concerned, there's literally nothing to a
+/// grouping expression. It's sole function is syntactic -- it lets you insert
+/// a lower-precedence expression where a higher precedence is expected.
+/// Thus, it has no runtime semantics on its own and therefore doesn't emit
+/// any bytecode. jthe inner call to expression() takes care of generating
+/// byte code for the expression inside the parentheses.
+static void grouping() {
+  expression();
+  consume(TOKEN_RIGHT_PAREN, "Expect ')' after expression.");
+}
+static uint8_t makeConstant(Value value) {
+  int constant = addConstant(currentChunk(), value);
+  if (constant > UINT8_MAX) {
+    error("Too many constants in one chunk.");
+    return 0;
+  }
+  return (uint8_t)constant;
+}
+static void emitConstant(Value value) {
+  emitBytes(OP_CONSTANT, makeConstant(value));
+}
+static void number() {
+  double value = strtod(parser.previous.start, NULL);
+  emitConstant(value);
+}
+
+static void unary() {
+  TokenType operatorType = parser.previous.type;
+
+  // compile the operand.
+  parsePrecedence(PREC_UNARY);
+  expression();
+
+  // Emit the operator instruction.
+  switch (operatorType) {
+  case TOKEN_MINUS:
+    emitByte(OP_NEGATE); // remember stack semantics; negate instruction should
+                         // be emitted last
+    break;
+  default:
+    return;
+  }
+}
+
+bool compile(const char *source, Chunk *chunk) {
+  initScanner(source);
+  compilingChunk = chunk;
+  parser.hadError = false;
+  parser.panicMode = false;
+  advance();
+  expression();
+  consume(TOKEN_EOF, "Expect end of input");
+  endCompiler();
+  return !parser.hadError;
 }
