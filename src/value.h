@@ -3,7 +3,33 @@
 
 #include "common.h"
 
-typedef double Value;
+typedef enum {
+  VAL_BOOL,
+  VAL_NIL,
+  VAL_NUMBER,
+} ValueType;
+typedef struct {
+  ValueType type;
+  union {
+    bool boolean;
+    double number;
+  } as; // value as boolean, value as number, and so on
+} Value;
+
+// These check correctness of downcast to prevent unsafe memory access
+#define IS_BOOL(value) ((value).type == VAL_BOOL)
+#define IS_NIL(value) ((value).type == VAL_NIL)
+#define IS_NUMBER(value) ((value).type == VAL_NUMBER)
+
+// These downcast Values into specific types
+#define AS_BOOL(value) ((value).as.boolean)
+#define AS_NUMBER(value) ((value).as.number)
+
+// These upcast specific union members into the less specific Value type
+#define BOOL_VAL(value) ((Value){VAL_BOOL, {.boolean = (value)}})
+#define NIL_VAL ((Value){VAL_NIL, {.number = 0}})
+#define NUMBER_VAL(value) ((Value){VAL_NUMBER, {.number = (value)}})
+
 typedef struct {
   int capacity;
   int count;

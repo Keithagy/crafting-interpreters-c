@@ -3,6 +3,8 @@
 #include "common.h"
 #include "compiler.h"
 #include "debug.h"
+#include "value.h"
+#include <stdarg.h>
 #include <stdio.h>
 
 // The choice to have a static VM instance is a concession for the book,
@@ -16,6 +18,21 @@
 VM vm;
 
 static void resetStack() { vm.stackTop = vm.stack; }
+static void runtimeError(const char *format, ...) {
+  va_list args;
+  va_start(args, format);
+  vfprintf(stderr, format, args);
+  va_end(args);
+  fputs("\n", stderr);
+
+  size_t instruction = vm.ip - vm.chunk->code - 1;
+
+  // TODO: fix up line encoding from previous example
+  int line =
+      vm.chunk->lines.lineInstructionCounts->instructionCount[instruction];
+  fprintf(stderr, "[line %d] in script \n", line);
+  resetStack();
+}
 void push(Value value) {
   *vm.stackTop = value;
   vm.stackTop++;
@@ -28,6 +45,7 @@ void initVM() { resetStack(); }
 
 void freeVM() {}
 
+static Value peek(int distance) { return vm.stackTop[-1 - distance]; }
 static InterpretResult run() {
 // Macro to read the byte currently pointed at by `ip` and then advances the
 // instruction pointer.
@@ -61,7 +79,11 @@ static InterpretResult run() {
       break;
     }
     case OP_NEGATE: {
-      push(-pop());
+      if (!IS_NUMBER(peek(0))) {
+        runtimeError("Operand must be a number.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
+      push(NUMBER_VAL(-AS_NUMBER(pop())));
       break;
     }
     case OP_ADD: {
