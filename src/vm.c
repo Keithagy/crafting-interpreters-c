@@ -27,9 +27,7 @@ static void runtimeError(const char *format, ...) {
 
   size_t instruction = vm.ip - vm.chunk->code - 1;
 
-  // TODO: fix up line encoding from previous example
-  int line =
-      vm.chunk->lines.lineInstructionCounts->instructionCount[instruction];
+  int line = getLineByOffset(vm.chunk, instruction);
   fprintf(stderr, "[line %d] in script \n", line);
   resetStack();
 }

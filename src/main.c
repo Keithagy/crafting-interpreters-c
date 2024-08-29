@@ -1,5 +1,3 @@
-#include "chunk.h"
-#include "debug.h"
 #include "vm.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,7 +26,7 @@ static char *readFile(const char *path) {
   // Move the file pointer to the end of the file to determine its size
   fseek(file, 0L, SEEK_END);
   size_t fileSize = ftell(file);
-  rewind(file);  // Reset the file pointer to the beginning
+  rewind(file); // Reset the file pointer to the beginning
 
   // Allocate a buffer to hold the entire file contents, plus a null terminator
   char *buffer = (char *)malloc(fileSize + 1);

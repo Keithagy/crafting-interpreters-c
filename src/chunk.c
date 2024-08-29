@@ -1,6 +1,5 @@
 #include "chunk.h"
 #include "./memory.h"
-#include "line.h"
 #include "value.h"
 #include <stdlib.h>
 
@@ -8,12 +7,14 @@ void initChunk(Chunk *chunk) {
   chunk->count = 0;
   chunk->capacity = 0;
   chunk->code = NULL;
+  chunk->lineCount = 0;
+  chunk->lineCapacity = 0;
+  chunk->lines = NULL;
   initValueArray(&chunk->constants);
-  initLineInstructionCountArray(&chunk->lines);
 }
 void freeChunk(Chunk *chunk) {
   FREE_ARRAY(uint8_t, chunk->code, chunk->capacity);
-  freeLineInstructionCountArray(&chunk->lines);
+  FREE_ARRAY(LineStart, chunk->lines, chunk->lineCapacity);
   freeValueArray(&chunk->constants);
   initChunk(chunk);
 }
@@ -25,8 +26,40 @@ void writeChunk(Chunk *chunk, u_int8_t byte, int line) {
         GROW_ARRAY(uint8_t, chunk->code, oldCapacity, chunk->capacity);
   }
   chunk->code[chunk->count] = byte;
-  addInstructionForLine(&chunk->lines, line);
   chunk->count++;
+
+  // See if we're still on the same line.
+  if (chunk->lineCount > 0 && chunk->lines[chunk->lineCount - 1].line == line) {
+    return;
+  }
+
+  if (chunk->lineCapacity < chunk->lineCount + 1) {
+    int oldCapacity = chunk->lineCapacity;
+    chunk->lineCapacity = GROW_CAPACITY(oldCapacity);
+    chunk->lines =
+        GROW_ARRAY(LineStart, chunk->lines, oldCapacity, chunk->lineCapacity);
+  }
+  LineStart *lineStart = &chunk->lines[chunk->lineCount++];
+  lineStart->offset = chunk->count - 1;
+  lineStart->line = line;
+}
+
+int getLineByOffset(Chunk *chunk, int instruction) {
+  int start = 0;
+  int end = chunk->lineCount - 1;
+
+  for (;;) {
+    int mid = (start + end) / 2;
+    LineStart *line = &chunk->lines[mid];
+    if (instruction < line->offset) {
+      end = mid - 1;
+    } else if (mid == chunk->lineCount - 1 ||
+               instruction < chunk->lines[mid + 1].offset) {
+      return line->line;
+    } else {
+      start = mid + 1;
+    }
+  }
 }
 
 int addConstant(Chunk *chunk, Value value) {

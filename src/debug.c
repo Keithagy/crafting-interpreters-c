@@ -1,6 +1,5 @@
 #include "debug.h"
 #include "chunk.h"
-#include "line.h"
 #include "value.h"
 #include <stdio.h>
 
@@ -25,8 +24,8 @@ static int constantInstruction(const char *name, Chunk *chunk, int offset) {
 
 int disassembleInstruction(Chunk *chunk, int offset) {
   printf("%04d ", offset);
-  int line = getLineByOffset(&chunk->lines, offset);
-  if (offset > 0 && line == getLineByOffset(&chunk->lines, offset - 1)) {
+  int line = getLineByOffset(chunk, offset);
+  if (offset > 0 && line == getLineByOffset(chunk, offset - 1)) {
     printf("   | ");
   } else {
     printf("%4d ", line);

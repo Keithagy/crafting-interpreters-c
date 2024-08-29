@@ -2,7 +2,6 @@
 #define clox_chunk_h
 
 #include "common.h"
-#include "line.h"
 #include "value.h"
 
 /**
@@ -21,6 +20,11 @@ typedef enum {
   OP_RETURN,
 } OpCode;
 
+typedef struct {
+  int offset;
+  int line;
+} LineStart;
+
 /**
  * Bytecode is a series of instructions. This struct provides a wrapper around
  * an array of bytes. Since we don't know how big the array needs to be before
@@ -33,9 +37,12 @@ typedef struct {
   int count;
   int capacity;
   uint8_t *code;
-  LineInstructionCountArray lines;
   ValueArray constants;
+  int lineCount;
+  int lineCapacity;
+  LineStart *lines;
 } Chunk;
+int getLineByOffset(Chunk *chunk, int instruction);
 void initChunk(Chunk *chunk);
 void freeChunk(Chunk *chunk);
 void writeChunk(Chunk *chunk, u_int8_t byte, int line);
