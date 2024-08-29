@@ -5,6 +5,7 @@
 #include "debug.h"
 #include "value.h"
 #include <stdarg.h>
+#include <stdbool.h>
 #include <stdio.h>
 
 // The choice to have a static VM instance is a concession for the book,
@@ -44,17 +45,25 @@ void initVM() { resetStack(); }
 void freeVM() {}
 
 static Value peek(int distance) { return vm.stackTop[-1 - distance]; }
+static bool isFalsey(Value value) {
+  return IS_NIL(value) || (IS_BOOL(value) && !AS_BOOL(value));
+}
 static InterpretResult run() {
 // Macro to read the byte currently pointed at by `ip` and then advances the
 // instruction pointer.
 #define READ_BYTE() (*vm.ip++)
 #define READ_CONSTANT() (vm.chunk->constants.values[READ_BYTE()])
-#define BINARY_OP(op)                                                          \
+#define BINARY_OP(valueType, op)                                               \
   do {                                                                         \
-    Value right = pop();                                                       \
-    Value left = pop();                                                        \
-    push(left op right);                                                       \
+    if (!IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1))) {                          \
+      runtimeError("Operands must be numbers.");                               \
+      return INTERPRET_RUNTIME_ERROR;                                          \
+    }                                                                          \
+    double right = AS_NUMBER(pop());                                           \
+    double left = AS_NUMBER(pop());                                            \
+    push(valueType(left op right));                                            \
   } while (false)
+
   for (;;) {
 #ifdef DEBUG_TRACE_EXECUTION
     printf("          ");
@@ -68,14 +77,23 @@ static InterpretResult run() {
 #endif
     uint8_t instruction;
     // Given a numeric opcode, we need to get to the right C code that
-    // implements the instruction's semnatics. This process is called `decoding`
-    // or `dispatching` the instruction.
+    // implements the instruction's semnatics. This process is called
+    // `decoding` or `dispatching` the instruction.
     switch (instruction = READ_BYTE()) {
     case OP_CONSTANT: {
       Value constant = READ_CONSTANT();
       push(constant);
       break;
     }
+    case OP_NIL:
+      push(NIL_VAL);
+      break;
+    case OP_TRUE:
+      push(BOOL_VAL(true));
+      break;
+    case OP_FALSE:
+      push(BOOL_VAL(false));
+      break;
     case OP_NEGATE: {
       if (!IS_NUMBER(peek(0))) {
         runtimeError("Operand must be a number.");
@@ -85,19 +103,23 @@ static InterpretResult run() {
       break;
     }
     case OP_ADD: {
-      BINARY_OP(+);
+      BINARY_OP(NUMBER_VAL, +);
       break;
     }
     case OP_SUBTRACT: {
-      BINARY_OP(-);
+      BINARY_OP(NUMBER_VAL, -);
       break;
     }
     case OP_MULTIPLY: {
-      BINARY_OP(*);
+      BINARY_OP(NUMBER_VAL, *);
       break;
     }
     case OP_DIVIDE: {
-      BINARY_OP(/);
+      BINARY_OP(NUMBER_VAL, /);
+      break;
+    }
+    case OP_NOT: {
+      push(BOOL_VAL(isFalsey(pop())));
       break;
     }
     case OP_RETURN:
