@@ -30,11 +30,12 @@ $(OUT_DIR)/%.o: $(SRC_DIR)/%.c | $(OUT_DIR)
 
 # Link
 $(EXECUTABLE): $(OBJECTS)
-	$(CC) $^ -o $@
+	$(CC) $(CFLAGS) $^ -o $@
 
 # Link debug version
+$(EXECUTABLE)_debug: CFLAGS += $(DEBUG_FLAGS)
 $(EXECUTABLE)_debug: $(OBJECTS)
-	$(CC) $(DEBUG_FLAGS) $^ -o $@
+	$(CC) $(CFLAGS) $^ -o $@
 
 # Create build directory
 $(OUT_DIR):

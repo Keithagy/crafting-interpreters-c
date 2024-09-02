@@ -66,7 +66,7 @@ int main(int argc, const char *argv[]) {
 
   // The code tests for one and two arguments, not zero and one,
   // because the first argument is the name of the executable.
-  if (argc == 1) {
+  if (argc == 1 || (argc == 2 && strlen(argv[1]) == 0)) {
     repl();
   } else if (argc == 2) {
     runFile(argv[1]);
