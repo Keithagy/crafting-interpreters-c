@@ -2,6 +2,7 @@
 #define clox_vm_h
 
 #include "chunk.h"
+#include "table.h"
 #define STACK_MAX 256
 
 typedef struct {
@@ -19,6 +20,7 @@ typedef struct {
   Value *stackTop; // C does allow for array pointer to point just past end of
                    // array
   Obj *objects;
+  Table strings;
 } VM;
 
 typedef enum {

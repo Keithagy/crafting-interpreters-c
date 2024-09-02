@@ -4,6 +4,8 @@
 #include "compiler.h"
 #include "debug.h"
 #include "memory.h"
+#include "object.h"
+#include "table.h"
 #include "value.h"
 #include <stdarg.h>
 #include <stdbool.h>
@@ -45,9 +47,13 @@ Value pop() {
 void initVM() {
   resetStack();
   vm.objects = NULL;
+  initTable(&vm.strings);
 }
 
-void freeVM() { freeObjects(); }
+void freeVM() {
+  freeTable(&vm.strings);
+  freeObjects();
+}
 
 static Value peek(int distance) { return vm.stackTop[-1 - distance]; }
 static bool isFalsey(Value value) {
@@ -58,10 +64,7 @@ static void concatenate() {
   ObjString *a = AS_STRING(pop());
 
   int length = a->length + b->length;
-  ObjString *result = makeString(length);
-  memcpy(result->chars, a->chars, a->length);
-  memcpy(result->chars + a->length, b->chars, b->length);
-  result->chars[length] = '\0';
+  ObjString *result = copyString(length, a->chars, b->chars);
 
   push(OBJ_VAL(result));
 }

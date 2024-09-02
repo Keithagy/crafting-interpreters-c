@@ -20,11 +20,11 @@ struct Obj {
 struct ObjString {
   Obj obj;
   int length;
+  uint32_t hash;
   char chars[];
 };
 
-ObjString *makeString(int length);
-ObjString *copyString(const char *chars, int length);
+ObjString *copyString(int length, const char *first, ...);
 void printObject(Value value);
 static inline bool isObjType(Value value, ObjType type) {
   return IS_OBJ(value) && AS_OBJ(value)->type == type;

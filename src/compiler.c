@@ -245,7 +245,7 @@ static void string() {
   // starts after the opening quote of a string, and runs for length, less the
   // quote characters.
   emitConstant(OBJ_VAL(
-      copyString(parser.previous.start + 1, parser.previous.length - 2)));
+      copyString(parser.previous.length - 2, parser.previous.start + 1)));
 }
 static void grouping() {
   expression();
