@@ -3,10 +3,12 @@
 #include "common.h"
 #include "compiler.h"
 #include "debug.h"
+#include "memory.h"
 #include "value.h"
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <string.h>
 
 // The choice to have a static VM instance is a concession for the book,
 // but not necessarily a sound engineering choice for a real language
@@ -40,13 +42,28 @@ Value pop() {
   vm.stackTop--;
   return *vm.stackTop;
 }
-void initVM() { resetStack(); }
+void initVM() {
+  resetStack();
+  vm.objects = NULL;
+}
 
-void freeVM() {}
+void freeVM() { freeObjects(); }
 
 static Value peek(int distance) { return vm.stackTop[-1 - distance]; }
 static bool isFalsey(Value value) {
   return IS_NIL(value) || (IS_BOOL(value) && !AS_BOOL(value));
+}
+static void concatenate() {
+  ObjString *b = AS_STRING(pop());
+  ObjString *a = AS_STRING(pop());
+
+  int length = a->length + b->length;
+  ObjString *result = makeString(length);
+  memcpy(result->chars, a->chars, a->length);
+  memcpy(result->chars + a->length, b->chars, b->length);
+  result->chars[length] = '\0';
+
+  push(OBJ_VAL(result));
 }
 static InterpretResult run() {
 // Macro to read the byte currently pointed at by `ip` and then advances the
@@ -115,7 +132,14 @@ static InterpretResult run() {
       BINARY_OP(BOOL_VAL, <);
       break;
     case OP_ADD: {
-      BINARY_OP(NUMBER_VAL, +);
+      if (IS_STRING(peek(0)) && IS_STRING(peek(1))) {
+        concatenate();
+      } else if (IS_NUMBER(peek(0)) && IS_NUMBER(peek(1))) {
+        BINARY_OP(NUMBER_VAL, +);
+      } else {
+        runtimeError("Operands must be two numbers or two strings.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
       break;
     }
     case OP_SUBTRACT: {
