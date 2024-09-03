@@ -62,8 +62,8 @@ static bool isFalsey(Value value) {
   return IS_NIL(value) || (IS_BOOL(value) && !AS_BOOL(value));
 }
 static void concatenate() {
-  ObjString *b = AS_STRING(peek(0));
-  ObjString *a = AS_STRING(peek(1));
+  ObjString *b = AS_STRING(pop());
+  ObjString *a = AS_STRING(pop());
   //< Garbage Collection concatenate-peek
 
   int length = a->length + b->length;
@@ -176,6 +176,8 @@ static InterpretResult run() {
     case OP_DEFINE_GLOBAL: {
       ObjString *name = READ_STRING();
       tableSet(&vm.globals, name, peek(0));
+      // After defining the variable in the globals table, we need to discard
+      // the constant
       pop();
       break;
     }
@@ -192,6 +194,17 @@ static InterpretResult run() {
         return INTERPRET_RUNTIME_ERROR;
       }
       push(value);
+      break;
+    }
+    case OP_SET_GLOBAL: {
+      ObjString *name = READ_STRING();
+      if (tableSet(&vm.globals, name, peek(0))) {
+        tableDelete(&vm.globals, name);
+        runtimeError("Undefined variable '%s'.", name->chars);
+      }
+      // Notice vs defining global: we do not pop the the assignment value off
+      // the stack assignment is an expression, so we need to leave the value
+      // here in case assignment is nested inside some larger expression.
       break;
     }
     case OP_RETURN:
