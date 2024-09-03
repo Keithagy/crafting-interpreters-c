@@ -24,6 +24,10 @@ typedef enum {
   OP_MULTIPLY,
   OP_DIVIDE,
   OP_NOT,
+  OP_DEFINE_GLOBAL,
+  OP_GET_GLOBAL,
+  OP_POP,
+  OP_PRINT,
   OP_RETURN,
 } OpCode;
 

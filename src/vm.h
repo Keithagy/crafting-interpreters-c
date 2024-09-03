@@ -20,6 +20,7 @@ typedef struct {
   Value *stackTop; // C does allow for array pointer to point just past end of
                    // array
   Obj *objects;
+  Table globals;
   Table strings;
 } VM;
 
