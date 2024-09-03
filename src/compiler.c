@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "chunk.h"
 #include "compiler.h"
@@ -128,6 +129,16 @@ static void endCompiler() {
 #endif
 }
 
+static void beginScope() { current->scopeDepth++; }
+static void endScope() {
+  current->scopeDepth--;
+  while (current->localCount > 0 &&
+         current->locals[current->localCount - 1].depth > current->scopeDepth) {
+    emitByte(OP_POP);
+    current->localCount--;
+  }
+}
+
 static void expression();
 static void statement();
 static void declaration();
@@ -161,14 +172,97 @@ static void parsePrecedence(Precedence precedence) {
 static uint8_t identifierConstant(Token *name) {
   return makeConstant(OBJ_VAL(copyString(name->start, name->length)));
 }
+static bool identifiersEqual(Token *a, Token *b) {
+  if (a->length != b->length)
+    return false;
+  return memcmp(a->start, b->start, a->length) == 0;
+}
+static int resolveLocal(Compiler *compiler, Token *name) {
+  for (int i = compiler->localCount - 1; i >= 0; i--) {
+    Local *local = &compiler->locals[i];
+    if (identifiersEqual(name, &local->name)) {
+      if (local->depth == -1) {
+        error("Can't read local variable in its own initializer.");
+      }
+      return i;
+    }
+  }
+  return -1;
+}
+static void addLocal(Token name) {
+  if (current->localCount == UINT8_COUNT) {
+    error("Too many local variables in function.");
+    return;
+  }
+  Local *local = &current->locals[current->localCount++];
+  local->name =
+      name; // local directly stores a copy of the Token struct for the
+            // identifier, which in turn stores a pointer to the first character
+            // (and length) in the source string which is of lifetime `static`.
+            // Thus addressing string-lifetime concerns.
+  local->depth = current->scopeDepth;
+  local->depth = -1;
+}
+
+// This is where the compiler records the existence of locals.
+// Globals are late bound, so the compiler doesn't keep track of which global
+// declarations it has seen.
+static void declareVariable() {
+  if (current->scopeDepth == 0) {
+    return;
+  }
+  Token *name = &parser.previous;
+  // Local vars are appended to the array when they're declared, which means the
+  // current scope is always at the end of the array. When we declare a new
+  // variable, we start at the end and work backward, checking for the error
+  // case where variable identifiers match, until we back out into an outer
+  // scope (which we identify by checking the depth of the local we are
+  // visiting).
+  for (int i = current->localCount - 1; i >= 0; i--) {
+    Local *local = &current->locals[i];
+    if (local->depth != -1 && local->depth < current->scopeDepth) {
+      break;
+    }
+    if (identifiersEqual(name, &local->name)) {
+      error("Already a variable with this name in this scope.");
+    }
+  }
+  addLocal(*name);
+}
 static uint8_t parseVariable(const char *errorMessage) {
   consume(TOKEN_IDENTIFIER, errorMessage);
+  declareVariable();
+  if (current->scopeDepth > 0) {
+    // We exit the function early if we are in a local scope.
+    // At runtime, locals aren't looked up by name.
+    // There's no need to stuff the variable's name into the constant table,
+    // so if the declaration is inside a local scope, we return a dummy table
+    // index instead.
+    return 0;
+  }
   return identifierConstant(&parser.previous);
 }
+static void markInitialized() {
+  current->locals[current->localCount - 1].depth = current->scopeDepth;
+}
 static void defineVariable(uint8_t global) {
+  if (current->scopeDepth > 0) {
+    // No code to create a local variable at runtime.
+    // VM has already executed the code for the var's initializer, and
+    // that value is sitting right on top of the stack as the only remaining
+    // temporary.
+    markInitialized();
+    return;
+  }
   emitBytes(OP_DEFINE_GLOBAL, global);
 }
 static void expression() { parsePrecedence(PREC_ASSIGNMENT); }
+static void block() {
+  while (!check(TOKEN_RIGHT_BRACE) && !check(TOKEN_EOF)) {
+    declaration();
+  }
+  consume(TOKEN_RIGHT_BRACE, "Expect '}' after block.");
+}
 static void varDeclaration() {
   uint8_t global = parseVariable("Expect variable name.");
   if (match(TOKEN_EQUAL)) {
@@ -183,10 +277,10 @@ static void expressionStatement() {
   expression();
   consume(TOKEN_SEMICOLON, "Expect ';' after expression.");
 
-  // Semantically, an expression statement evaluates the expression and discards
-  // the result. The compiler directly encodes that behavior. It compiles the
-  // expression, and emits a pop instruction. (because the expression call
-  // pushes onto the stack directly);
+  // Semantically, an expression statement evaluates the expression and
+  // discards the result. The compiler directly encodes that behavior. It
+  // compiles the expression, and emits a pop instruction. (because the
+  // expression call pushes onto the stack directly);
   emitByte(OP_POP);
 }
 static void printStatement() {
@@ -231,6 +325,10 @@ static void declaration() {
 static void statement() {
   if (match(TOKEN_PRINT)) {
     printStatement();
+  } else if (match(TOKEN_LEFT_BRACE)) {
+    beginScope();
+    block();
+    endScope();
   } else {
     expressionStatement();
   }
@@ -245,8 +343,8 @@ static void unary(bool canAssign) {
   // Emit the operator instruction.
   switch (operatorType) {
   case TOKEN_MINUS:
-    emitByte(OP_NEGATE); // remember stack semantics; negate instruction should
-                         // be emitted last
+    emitByte(OP_NEGATE); // remember stack semantics; negate instruction
+                         // should be emitted last
     break;
   case TOKEN_BANG:
     emitByte(OP_NOT);
@@ -267,14 +365,11 @@ static void binary(bool canAssign) {
   // We want to parse it like:
   // ((1 + 2) + 3) + 4
   // Thus, when parsing the right-hand operand to the first +, we want to
-  // consume the 2, but not the rest, so we use one level above +’s precedence.
-  // But if our operator was right-associative, this would be wrong.
-  // Given:
-  // a = b = c = d
-  // Since assignment is right-associative, we want to parse it as:
-  // a = (b = (c = d))
-  // To enable that, we would call parsePrecedence() with the
-  // *same* precedence as the current operator.
+  // consume the 2, but not the rest, so we use one level above +’s
+  // precedence. But if our operator was right-associative, this would be
+  // wrong. Given: a = b = c = d Since assignment is right-associative, we
+  // want to parse it as: a = (b = (c = d)) To enable that, we would call
+  // parsePrecedence() with the *same* precedence as the current operator.
   parsePrecedence((Precedence)(rule->precedence + 1));
 
   switch (operatorType) {
@@ -364,12 +459,21 @@ static void string(bool canAssign) {
       copyString(parser.previous.start + 1, parser.previous.length - 2)));
 }
 static void namedVariable(Token name, bool canAssign) {
-  uint8_t arg = identifierConstant(&name);
+  uint8_t getOp, setOp;
+  int arg = resolveLocal(current, &name);
+  if (arg != -1) {
+    getOp = OP_GET_LOCAL;
+    setOp = OP_SET_LOCAL;
+  } else {
+    arg = identifierConstant(&name);
+    getOp = OP_GET_GLOBAL;
+    setOp = OP_SET_GLOBAL;
+  }
   if (canAssign && match(TOKEN_EQUAL)) {
     expression();
-    emitBytes(OP_SET_GLOBAL, arg);
+    emitBytes(setOp, (uint8_t)arg);
   } else {
-    emitBytes(OP_GET_GLOBAL, arg);
+    emitBytes(getOp, (uint8_t)arg);
   }
 }
 static void variable(bool canAssign) {

@@ -14,6 +14,16 @@ static int simpleInstruction(const char *name, int offset) {
   printf("%s\n", name);
   return offset + 1;
 }
+// Erasing local variable names in the compiler is a real issue if we ever want
+// to implement a debugger for our VM. When users step through code, they expect
+// to see the valeus of local variables organized by their names. To supoprt
+// that, we'd need to output some additional information that tracks the name of
+// each local variable at each stack slot.
+static int byteInstruction(const char *name, Chunk *chunk, int offset) {
+  uint8_t slot = chunk->code[offset + 1];
+  printf("%-16s %4d\n", name, slot);
+  return offset + 2;
+}
 static int constantInstruction(const char *name, Chunk *chunk, int offset) {
   uint8_t constant = chunk->code[offset + 1];
   printf("%-16s %4d '", name, constant);
@@ -32,6 +42,10 @@ int disassembleInstruction(Chunk *chunk, int offset) {
   }
   uint8_t instruction = chunk->code[offset];
   switch (instruction) {
+  case OP_GET_LOCAL:
+    return byteInstruction("OP_GET_LOCAL", chunk, offset);
+  case OP_SET_LOCAL:
+    return byteInstruction("OP_SET_LOCAL", chunk, offset);
   case OP_PRINT:
     return simpleInstruction("OP_PRINT", offset);
   case OP_POP: {

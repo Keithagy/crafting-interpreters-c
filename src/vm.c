@@ -186,6 +186,24 @@ static InterpretResult run() {
       printf("\n");
       break;
     }
+    case OP_GET_LOCAL: {
+      uint8_t slot = READ_BYTE();
+      push(vm.stack[slot]); // this is what it means for your vm to be
+                            // stack-based... You can't write instructions that
+                            // take an offset as an operand, and you want to
+                            // keep your instructions operating with the stack
+                            // semantics in mind. Contra register-based bytecode
+      break;
+    }
+    case OP_SET_LOCAL: {
+      uint8_t slot = READ_BYTE();
+      vm.stack[slot] =
+          peek(0); // Remember, assignment is an exprssion, and every expression
+                   // produces a value. The value of an assignment expression is
+                   // the assigned value itself, so the VM just leaves the value
+                   // on the stack.
+      break;
+    }
     case OP_GET_GLOBAL: {
       ObjString *name = READ_STRING();
       Value value;
