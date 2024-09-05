@@ -117,6 +117,22 @@ static void emitBytes(uint8_t byte1, uint8_t byte2) {
   emitByte(byte1);
   emitByte(byte2);
 }
+static int emitJump(uint8_t instruction) {
+  emitByte(instruction);
+  emitByte(0xff);
+  emitByte(0xff);
+  return currentChunk()->count - 2;
+}
+static void patchJump(int offset) {
+  // -2 to adjust for the bytecode for the jump offset itself.
+  int jump = currentChunk()->count - offset - 2;
+  if (jump > UINT16_MAX) {
+    error("Too much code to jump over.");
+  }
+  currentChunk()->code[offset] =
+      (jump >> 8) & 0xff; // this writes the higher 8 bits
+  currentChunk()->code[offset + 1] = jump & 0xff; // this writes the lower 8
+}
 
 static void emitReturn() { emitByte(OP_RETURN); }
 static void endCompiler() {
@@ -283,6 +299,30 @@ static void expressionStatement() {
   // expression call pushes onto the stack directly);
   emitByte(OP_POP);
 }
+static void ifStatement() {
+  consume(TOKEN_LEFT_PAREN, "Expect '(' after 'if'.");
+  expression();
+  consume(TOKEN_RIGHT_PAREN, "Expect ')' after condition.");
+
+  // We have a problem here. When we're writing the jump-if-false instruction,
+  // we don't have the operand yet (jump by how much?). We haven't compiled the
+  // then branch yet, so we don't know how much bytecode it contains. To fix
+  // that, we do `backpatching`. We emit the jump instruction first with a
+  // placeholder offset operand.
+  int thenJump = emitJump(OP_JUMP_IF_FALSE);
+  emitByte(OP_POP);
+  statement(); // then block
+  int elseJump = emitJump(OP_JUMP);
+  // We keep track of where that half-finished instruction is. Next, we compile
+  // the then body. After that, we can see how many operations the `then` block
+  // needed to backfill the jump instruction's operand.
+  patchJump(thenJump);
+  emitByte(OP_POP);
+
+  if (match(TOKEN_ELSE))
+    statement(); // else block
+  patchJump(elseJump);
+}
 static void printStatement() {
   expression();
   consume(TOKEN_SEMICOLON, "expect ';' after value.");
@@ -325,6 +365,8 @@ static void declaration() {
 static void statement() {
   if (match(TOKEN_PRINT)) {
     printStatement();
+  } else if (match(TOKEN_IF)) {
+    ifStatement();
   } else if (match(TOKEN_LEFT_BRACE)) {
     beginScope();
     block();
