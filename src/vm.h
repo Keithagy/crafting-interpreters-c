@@ -2,20 +2,22 @@
 #define clox_vm_h
 
 #include "chunk.h"
+#include "object.h"
 #include "table.h"
-#define STACK_MAX 256
+#define FRAMES_MAX 64
+#define STACK_MAX (FRAMES_MAX * UINT8_COUNT)
 
 typedef struct {
-  Chunk *chunk;
-  // If we were trying to squeeze every ounce of speed out of our bytecode
-  // interpreter, we would store `ip` in a local variable. It gets modified so
-  // often during execution that we want the C compiler to keep it in a
-  // register. Still, we use an actual real C pointer pointing right into the
-  // middle of the bytecode array instead of something like an integer index
-  // because it's faster to dereference a pointer than look up an element in an
-  // array by index.
-  uint8_t *ip; // >> instruction pointer, points to the next instruction, not
-  // the one currently being handled
+  ObjFunction *function;
+  uint8_t *ip;
+  Value *slots; // `slots` points into the VM's value stack at the first slot
+                // that this function invocation can use. Represents scoping
+                // local to a given invocation.
+} CallFrame;
+
+typedef struct {
+  CallFrame frames[FRAMES_MAX];
+  int frameCount;
   Value stack[STACK_MAX];
   Value *stackTop; // C does allow for array pointer to point just past end of
                    // array

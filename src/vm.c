@@ -7,6 +7,7 @@
 #include "object.h"
 #include "table.h"
 #include "value.h"
+#include "vm.h"
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -15,14 +16,17 @@
 // The choice to have a static VM instance is a concession for the book,
 // but not necessarily a sound engineering choice for a real language
 // implementation. If you're building a VM that's designed to be embedded in
-// other host applications, it gives the host more flexibility if you explicitly
-// take a VM pointer and pass it around.
+// other host applications, it gives the host more flexibility if you
+// explicitly take a VM pointer and pass it around.
 //
 // That way, the host app can control when and where memory for the VM is
 // allocated, run multiple VMs in parallel, etc.
 VM vm;
 
-static void resetStack() { vm.stackTop = vm.stack; }
+static void resetStack() {
+  vm.stackTop = vm.stack;
+  vm.frameCount = 0;
+}
 static void runtimeError(const char *format, ...) {
   va_list args;
   va_start(args, format);
@@ -30,9 +34,10 @@ static void runtimeError(const char *format, ...) {
   va_end(args);
   fputs("\n", stderr);
 
-  size_t instruction = vm.ip - vm.chunk->code - 1;
+  CallFrame *frame = &vm.frames[vm.frameCount - 1];
+  size_t instruction = frame->ip - frame->function->chunk.code - 1;
 
-  int line = getLineByOffset(vm.chunk, instruction);
+  int line = getLineByOffset(&frame->function->chunk, instruction);
   fprintf(stderr, "[line %d] in script \n", line);
   resetStack();
 }
@@ -76,11 +81,13 @@ static void concatenate() {
   push(OBJ_VAL(result));
 }
 static InterpretResult run() {
+  CallFrame *frame = &vm.frames[vm.frameCount - 1];
 // Macro to read the byte currently pointed at by `ip` and then advances the
 // instruction pointer.
-#define READ_BYTE() (*vm.ip++)
-#define READ_CONSTANT() (vm.chunk->constants.values[READ_BYTE()])
-#define READ_SHORT() (vm.ip += 2, (uint16_t)((vm.ip[-2] << 8) | vm.ip[-1]))
+#define READ_BYTE() (*frame->ip++)
+#define READ_CONSTANT() (frame->function->chunk.constants.values[READ_BYTE()])
+#define READ_SHORT()                                                           \
+  (frame->ip += 2, (uint16_t)((frame->ip[-2] << 8) | frame->ip[-1]))
 #define READ_STRING() (AS_STRING(READ_CONSTANT()))
 #define BINARY_OP(valueType, op)                                               \
   do {                                                                         \
@@ -102,7 +109,8 @@ static InterpretResult run() {
       printf(" ]");
     }
     printf("\n");
-    disassembleInstruction(vm.chunk, (int)(vm.ip - vm.chunk->code));
+    disassembleInstruction(&frame->function->chunk,
+                           (int)(frame->ip - frame->function->chunk.code));
 #endif
     uint8_t instruction;
     // Given a numeric opcode, we need to get to the right C code that
@@ -139,7 +147,7 @@ static InterpretResult run() {
     }
     case OP_LOOP: {
       uint16_t offset = READ_SHORT();
-      vm.ip -= offset;
+      frame->ip -= offset;
       break;
     }
     case OP_GREATER:
@@ -194,16 +202,17 @@ static InterpretResult run() {
     }
     case OP_GET_LOCAL: {
       uint8_t slot = READ_BYTE();
-      push(vm.stack[slot]); // this is what it means for your vm to be
-                            // stack-based... You can't write instructions that
-                            // take an offset as an operand, and you want to
-                            // keep your instructions operating with the stack
-                            // semantics in mind. Contra register-based bytecode
+      push(frame->slots[slot]); // this is what it means for your vm to be
+                                // stack-based... You can't write instructions
+                                // that take an offset as an operand, and you
+                                // want to keep your instructions operating with
+                                // the stack semantics in mind. Contra
+                                // register-based bytecode
       break;
     }
     case OP_SET_LOCAL: {
       uint8_t slot = READ_BYTE();
-      vm.stack[slot] =
+      frame->slots[slot] =
           peek(0); // Remember, assignment is an exprssion, and every expression
                    // produces a value. The value of an assignment expression is
                    // the assigned value itself, so the VM just leaves the value
@@ -213,12 +222,12 @@ static InterpretResult run() {
     case OP_JUMP_IF_FALSE: {
       uint16_t offset = READ_SHORT();
       if (isFalsey(peek(0)))
-        vm.ip += offset;
+        frame->ip += offset;
       break;
     }
     case OP_JUMP: {
       uint16_t offset = READ_SHORT();
-      vm.ip += offset;
+      frame->ip += offset;
       break;
     }
     case OP_GET_GLOBAL: {
@@ -255,15 +264,14 @@ static InterpretResult run() {
 }
 
 InterpretResult interpret(const char *source) {
-  Chunk chunk;
-  initChunk(&chunk);
-  if (!compile(source, &chunk)) {
-    freeChunk(&chunk);
+  ObjFunction *function = compile(source);
+  if (function == NULL)
     return INTERPRET_COMPILE_ERROR;
-  }
-  vm.chunk = &chunk;
-  vm.ip = vm.chunk->code;
-  InterpretResult result = run();
-  freeChunk(&chunk);
-  return result;
+  push(OBJ_VAL(function));
+  CallFrame *frame = &vm.frames[vm.frameCount++];
+  frame->function = function;
+  frame->ip = function->chunk.code;
+  frame->slots = vm.stack;
+
+  return run();
 }
