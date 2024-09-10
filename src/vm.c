@@ -295,9 +295,26 @@ static InterpretResult run() {
       frame = &vm.frames[vm.frameCount - 1];
       break;
     }
-    case OP_RETURN:
-      // Exit interpreter.
-      return INTERPRET_OK;
+    case OP_RETURN: {
+      Value result = pop(); // value being returned will be on top of the stack
+      vm.frameCount--; // We will discard the inner function's frame, so we can
+                       // decrement framecount
+      if (vm.frameCount == 0) {
+        // if it turns out we just returned from the top-level frame, we pop()
+        // the script function and then exit the interpreter.
+        pop();
+        return INTERPRET_OK;
+      }
+      // We move vm's stack top back to where the inner frame started
+      // (previously contained the function object of the inner function)
+      vm.stackTop = frame->slots;
+      push(result); // and then we place the return value at the new stack top
+      frame = &vm.frames[vm.frameCount -
+                         1]; // the previous frame is now out of bounds; so we
+                             // reassign the value of the current frame to point
+                             // to the last value (which we just decremented)
+      break;
+    }
     }
   }
 #undef BINARY_OP

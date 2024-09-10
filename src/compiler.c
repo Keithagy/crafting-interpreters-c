@@ -189,7 +189,11 @@ static void patchJump(int offset) {
   currentChunk()->code[offset + 1] = jump & 0xff; // this writes the lower 8
 }
 
-static void emitReturn() { emitByte(OP_RETURN); }
+static void emitReturn() {
+  emitByte(OP_NIL); // this language implicitly returns nil if no return value
+                    // is specified
+  emitByte(OP_RETURN);
+}
 static ObjFunction *endCompiler() {
   emitReturn();
   ObjFunction *function = current->function;
@@ -498,6 +502,23 @@ static void printStatement() {
   consume(TOKEN_SEMICOLON, "expect ';' after value.");
   emitByte(OP_PRINT);
 }
+
+// Observe here that returning works quite differently from jlox, because there
+// is nestedness only at the compilation step in clox. The compiled bytecode is
+// all flat, because it explicitly manipulates instruction offsets whereas jlox
+// made use of the instruction offsets built into the jvm call stack.
+static void returnStatement() {
+  if (current->type == TYPE_SCRIPT) {
+    error("Can't return from top-level code.");
+  }
+  if (match(TOKEN_SEMICOLON)) {
+    emitReturn();
+  } else {
+    expression();
+    consume(TOKEN_SEMICOLON, "Expect ';' after return value.");
+    emitByte(OP_RETURN);
+  }
+}
 static void whileStatement() {
   int loopStart = currentChunk()->count;
   consume(TOKEN_LEFT_PAREN, "Expect '(' after 'while'.");
@@ -551,6 +572,8 @@ static void statement() {
     printStatement();
   } else if (match(TOKEN_IF)) {
     ifStatement();
+  } else if (match(TOKEN_RETURN)) {
+    returnStatement();
   } else if (match(TOKEN_FOR)) {
     forStatement();
   } else if (match(TOKEN_WHILE)) {
