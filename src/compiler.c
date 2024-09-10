@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "chunk.h"
+#include "common.h"
 #include "compiler.h"
 #include "object.h"
 #include "scanner.h"
@@ -45,6 +46,11 @@ typedef struct {
   int depth;
 } Local;
 
+typedef struct {
+  uint8_t index;
+  bool isLocal;
+} Upvalue;
+
 typedef enum { TYPE_FUNCTION, TYPE_SCRIPT } FunctionType;
 
 typedef struct Compiler {
@@ -55,6 +61,7 @@ typedef struct Compiler {
   FunctionType type;
   Local locals[UINT8_COUNT];
   int localCount;
+  Upvalue upvalues[UINT8_COUNT];
   int scopeDepth;
 } Compiler;
 
@@ -265,6 +272,45 @@ static int resolveLocal(Compiler *compiler, Token *name) {
       }
       return i;
     }
+  }
+  return -1;
+}
+static int addUpvalue(Compiler *compiler, uint8_t index, bool isLocal) {
+  int upvalueCount = compiler->function->upvalueCount;
+
+  // A closure may reference the same variable in a surrounding function
+  // multiple times. In that case, we don't want to waste time and memory
+  // creating a separate upvalue for each identifier expression. To fix that,
+  // before we add a new upvalue, we first check to see if the function already
+  // has an upvalue that closes over that variable.
+  for (int i = 0; i < upvalueCount; i++) {
+    Upvalue *upvalue = &compiler->upvalues[i];
+    // if we find an upvalue in the array whose slot index matches the one we're
+    // adding, we just return that upvalue index and reuse it.
+    if (upvalue->index == index && upvalue->isLocal == isLocal) {
+      return i;
+    }
+  }
+
+  if (upvalueCount == UINT8_COUNT) {
+    error("Too many closure variables in function.");
+    return 0;
+  }
+
+  // Otherwise, we fall through and add the new upvalue.
+  compiler->upvalues[upvalueCount].isLocal = isLocal;
+  compiler->upvalues[upvalueCount].index = index;
+  return compiler->function
+      ->upvalueCount++; // like constants and function arity, the upvalue count
+                        // is another one of those little pieces of data that
+                        // form the bridge between the compiler and runtime.
+}
+static int resolveUpValue(Compiler *compiler, Token *name) {
+  if (compiler->enclosing == NULL)
+    return -1;
+  int local = resolveLocal(compiler->enclosing, name);
+  if (local != -1) {
+    return addUpvalue(compiler, (uint8_t)local, true);
   }
   return -1;
 }
@@ -724,6 +770,9 @@ static void namedVariable(Token name, bool canAssign) {
   if (arg != -1) {
     getOp = OP_GET_LOCAL;
     setOp = OP_SET_LOCAL;
+  } else if ((arg = resolveUpValue(current, &name)) != -1) {
+    getOp = OP_GET_UPVALUE;
+    setOp = OP_SET_UPVALUE;
   } else {
     arg = identifierConstant(&name);
     getOp = OP_GET_GLOBAL;
