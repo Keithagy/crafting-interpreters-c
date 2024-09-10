@@ -17,6 +17,11 @@ static Obj *allocateObject(size_t size, ObjType type) {
   vm.objects = object;
   return object;
 }
+ObjClosure *newClosure(ObjFunction *function) {
+  ObjClosure *closure = ALLOCATE_OBJ(ObjClosure, OBJ_CLOSURE);
+  closure->function = function;
+  return closure;
+}
 static ObjString *allocateString(char *chars, int length, uint32_t hash) {
   ObjString *string = ALLOCATE_OBJ(ObjString, OBJ_STRING);
   string->length = length;
@@ -91,5 +96,8 @@ void printObject(Value value) {
     printf("<native fn>");
     break;
   }
+  case OBJ_CLOSURE:
+    printFunction(AS_CLOSURE(value)->function);
+    break;
   }
 }

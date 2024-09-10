@@ -35,6 +35,7 @@ typedef enum {
   OP_POP,
   OP_CALL,
   OP_PRINT,
+  OP_CLOSURE,
   OP_RETURN,
 } OpCode;
 
