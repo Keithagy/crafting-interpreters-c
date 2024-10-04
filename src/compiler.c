@@ -44,6 +44,7 @@ typedef struct {
 typedef struct {
   Token name;
   int depth;
+  bool isCaptured;
 } Local;
 
 typedef struct {
@@ -106,6 +107,7 @@ static void initCompiler(Compiler *compiler, FunctionType type) {
   local->depth = 0;
   local->name.start = "";
   local->name.length = 0;
+  local->isCaptured = false;
 }
 
 static Chunk *currentChunk() { return &current->function->chunk; }
@@ -220,7 +222,11 @@ static void endScope() {
   current->scopeDepth--;
   while (current->localCount > 0 &&
          current->locals[current->localCount - 1].depth > current->scopeDepth) {
-    emitByte(OP_POP);
+    if (current->locals[current->localCount - 1].isCaptured) {
+      emitByte(OP_CLOSE_UPVALUE);
+    } else {
+      emitByte(OP_POP);
+    }
     current->localCount--;
   }
 }
@@ -310,7 +316,13 @@ static int resolveUpValue(Compiler *compiler, Token *name) {
     return -1;
   int local = resolveLocal(compiler->enclosing, name);
   if (local != -1) {
+    compiler->enclosing->locals[local].isCaptured = true;
     return addUpvalue(compiler, (uint8_t)local, true);
+  }
+
+  int upvalue = resolveUpValue(compiler->enclosing, name);
+  if (upvalue != -1) {
+    return addUpvalue(compiler, (uint8_t)upvalue, false);
   }
   return -1;
 }
@@ -327,6 +339,7 @@ static void addLocal(Token name) {
             // Thus addressing string-lifetime concerns.
   local->depth = current->scopeDepth;
   local->depth = -1;
+  local->isCaptured = false;
 }
 
 // This is where the compiler records the existence of locals.
@@ -438,6 +451,17 @@ static void funcBody(FunctionType type) {
 
   ObjFunction *function = endCompiler();
   emitBytes(OP_CLOSURE, makeConstant(OBJ_VAL(function)));
+
+  // The `OP_CLOSURE` instruction is unique in that it has a variably-sized
+  // encoding. For each upvalue the closure captures, there are two single-byte
+  // operands. Each pair of operands specifies what that upvalue captures. If
+  // the first byte is one, it captures a local variable in the enclosing
+  // function. If zero, it captures one of the function's upvalues. The next
+  // byte is the local slot or the upvalue index to capture.
+  for (int i = 0; i < function->upvalueCount; i++) {
+    emitByte(compiler.upvalues[i].isLocal ? 1 : 0);
+    emitByte(compiler.upvalues[i].index);
+  }
 }
 static void funDeclaration() {
   uint8_t global = parseVariable(

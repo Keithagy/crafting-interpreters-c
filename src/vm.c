@@ -31,6 +31,7 @@ static Value clockNative(int argCount, Value *args) {
 static void resetStack() {
   vm.stackTop = vm.stack;
   vm.frameCount = 0;
+  vm.openUpvalues = NULL;
 }
 static void runtimeError(const char *format, ...) {
   va_list args;
@@ -126,6 +127,36 @@ static bool callValue(Value callee, int argCount) {
   }
   runtimeError("Can only call functions and classes.");
   return false;
+}
+static ObjUpvalue *captureUpvalue(Value *local) {
+  ObjUpvalue *prevUpvalue = NULL;
+  ObjUpvalue *upvalue = vm.openUpvalues;
+
+  while (upvalue != NULL && upvalue->location > local) {
+    prevUpvalue = upvalue;
+    upvalue = upvalue->next;
+  }
+
+  if (upvalue != NULL && upvalue->location == local) {
+    return upvalue;
+  }
+
+  ObjUpvalue *createdUpvalue = newUpvalue(local);
+  createdUpvalue->next = upvalue;
+  if (prevUpvalue == NULL) {
+    vm.openUpvalues = createdUpvalue;
+  } else {
+    prevUpvalue->next = createdUpvalue;
+  }
+  return createdUpvalue;
+}
+static void closeUpvalues(Value *last) {
+  while (vm.openUpvalues != NULL && vm.openUpvalues->location >= last) {
+    ObjUpvalue *upvalue = vm.openUpvalues;
+    upvalue->closed = *upvalue->location;
+    upvalue->location = &upvalue->closed;
+    vm.openUpvalues = upvalue->next;
+  }
 }
 static bool isFalsey(Value value) {
   return IS_NIL(value) || (IS_BOOL(value) && !AS_BOOL(value));
@@ -327,6 +358,7 @@ static InterpretResult run() {
     }
     case OP_RETURN: {
       Value result = pop(); // value being returned will be on top of the stack
+      closeUpvalues(frame->slots);
       vm.frameCount--; // We will discard the inner function's frame, so we can
                        // decrement framecount
       if (vm.frameCount == 0) {
@@ -349,6 +381,42 @@ static InterpretResult run() {
       ObjFunction *function = AS_FUNCTION(READ_CONSTANT());
       ObjClosure *closure = newClosure(function);
       push(OBJ_VAL(closure));
+
+      // We iterate over each upvalue the closure expects.
+      // For each one, we read a pair of operand bytes.
+      // If the upvalue closes over a local variable in the enclosing function,
+      // we capture the local variable. Else, we capture an upvalue from the
+      // surrounding function. An `OP_CLOSURE` instruction is emitted at the end
+      // of a function declaration. At the moment that we are executing that
+      // declaration, the current function is the surrounding one.
+      // That means the current function's closure is stored in the CallFrame at
+      // the top of the callstack. So, to grab an upvalue from the enclosing
+      // function, We can read it right from the frame local variable, which
+      // caches a reference to that CallFrame.
+      for (int i = 0; i < closure->upvalueCount; i++) {
+        uint8_t isLocal = READ_BYTE();
+        uint8_t index = READ_BYTE();
+        if (isLocal) {
+          closure->upvalues[i] = captureUpvalue(frame->slots + index);
+        } else {
+          closure->upvalues[i] = frame->closure->upvalues[index];
+        }
+      }
+      break;
+    }
+    case OP_GET_UPVALUE: {
+      uint8_t slot = READ_BYTE();
+      push(*frame->closure->upvalues[slot]->location);
+      break;
+    }
+    case OP_SET_UPVALUE: {
+      uint8_t slot = READ_BYTE();
+      *frame->closure->upvalues[slot]->location = peek(0);
+      break;
+    }
+    case OP_CLOSE_UPVALUE: {
+      closeUpvalues(vm.stackTop - 1);
+      pop();
       break;
     }
     }

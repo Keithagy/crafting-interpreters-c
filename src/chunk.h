@@ -35,6 +35,7 @@ typedef enum {
   OP_JUMP,
   OP_LOOP,
   OP_POP,
+  OP_CLOSE_UPVALUE,
   OP_CALL,
   OP_PRINT,
   OP_CLOSURE,
@@ -66,7 +67,7 @@ typedef struct {
 int getLineByOffset(Chunk *chunk, int instruction);
 void initChunk(Chunk *chunk);
 void freeChunk(Chunk *chunk);
-void writeChunk(Chunk *chunk, u_int8_t byte, int line);
+void writeChunk(Chunk *chunk, uint8_t byte, int line);
 int addConstant(Chunk *chunk, Value value);
 
 #endif
