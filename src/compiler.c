@@ -5,6 +5,7 @@
 #include "chunk.h"
 #include "common.h"
 #include "compiler.h"
+#include "memory.h"
 #include "object.h"
 #include "scanner.h"
 #include "value.h"
@@ -880,4 +881,14 @@ ObjFunction *compile(const char *source) {
   }
   ObjFunction *function = endCompiler();
   return parser.hadError ? NULL : function;
+}
+void markCompilerRoots() {
+  Compiler *compiler = current;
+  while (compiler != NULL) {
+    // The only object the compiler uses is the ObjFunction which it is
+    // compiling into. Since the functino declarations can nest, the compiler
+    // has a linked list of those and we walk the whole list.
+    markObject((Obj *)compiler->function);
+    compiler = compiler->enclosing;
+  }
 }
