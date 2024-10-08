@@ -15,6 +15,9 @@ static Obj *allocateObject(size_t size, ObjType type) {
   object->type = type;
   object->next = vm.objects;
   vm.objects = object;
+#ifdef DEBUG_LOG_GC
+  printf("%p allocation %zu for %d\n", (void *)object, size, type);
+#endif /* ifdef DEBUG_LOG_GC */
   return object;
 }
 ObjClosure *newClosure(ObjFunction *function) {

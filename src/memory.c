@@ -4,7 +4,25 @@
 #include "vm.h"
 #include <stdlib.h>
 
+#ifdef DEBUG_LOG_GC
+#include "debug.h"
+#include <stdio.h>
+#endif
+
 void *reallocate(void *pointer, size_t oldSize, size_t newSize) {
+  if (newSize > oldSize) {
+#ifdef DEBUG_STRESS_GC
+    // Collecting right before allocation is the classic way to wire a GC into a
+    // VM. You're already calling into the memory manager, so it's an easy place
+    // to hook in the code. Also, allocation is the only time when you really
+    // need some freed up memory so that you can resuse it. If you don't use
+    // allocation to trigger a GC, you have to make sure every possible place in
+    // code where you can loop and allocate memory also has a way to trigger the
+    // collector. Otherwise, the VM can get into a starved state where it needs
+    // more memory but never collects any.
+    collectGarbage();
+#endif
+  }
   if (newSize == 0) {
     free(pointer);
     return NULL;
@@ -18,6 +36,9 @@ void *reallocate(void *pointer, size_t oldSize, size_t newSize) {
 }
 
 void freeObject(Obj *object) {
+#ifdef DEBUG_LOG_GC
+  printf("%p free type %d\n", (void *)object, object->type);
+#endif /* ifdef DEBUG_LOG_GC */
   switch (object->type) {
   case OBJ_STRING: {
     ObjString *string = (ObjString *)object;
@@ -51,6 +72,15 @@ void freeObject(Obj *object) {
     FREE(ObjUpvalue, object);
     break;
   }
+}
+void collectGarbage() {
+#ifdef DEBUG_LOG_GC
+  printf("-- gc begin\n");
+#endif
+
+#ifdef DEBUG_LOG_GC
+  printf("-- gc end\n");
+#endif
 }
 void freeObjects() {
   Obj *object = vm.objects;
