@@ -40,6 +40,7 @@ typedef enum {
   OP_PRINT,
   OP_CLOSURE,
   OP_RETURN,
+  OP_CLASS,
 } OpCode;
 
 typedef struct {

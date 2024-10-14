@@ -131,6 +131,15 @@ static bool callValue(Value callee, int argCount) {
     }
     case OBJ_CLOSURE:
       return call(AS_CLOSURE(callee), argCount);
+    case OBJ_CLASS: {
+      ObjClass *klass = AS_CLASS(callee);
+      vm.stackTop[-argCount - 1] = OBJ_VAL(newInstance(
+          klass)); // pointer arithmetic here ensures that the new instance
+                   // replaces the class object's spot on the stack, whilst
+                   // keeping initializer operands where they need to be so the
+                   // initializer can access them correctly
+      return true;
+    }
     default:
       break;
     }
@@ -228,6 +237,10 @@ static InterpretResult run() {
     case OP_CONSTANT: {
       Value constant = READ_CONSTANT();
       push(constant);
+      break;
+    }
+    case OP_CLASS: {
+      push(OBJ_VAL(newClass(READ_STRING())));
       break;
     }
     case OP_NIL:
