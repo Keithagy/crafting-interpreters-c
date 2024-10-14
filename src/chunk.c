@@ -1,6 +1,7 @@
 #include "chunk.h"
 #include "./memory.h"
 #include "value.h"
+#include "vm.h"
 #include <stdlib.h>
 
 void initChunk(Chunk *chunk) {
@@ -63,7 +64,9 @@ int getLineByOffset(Chunk *chunk, int instruction) {
 }
 
 int addConstant(Chunk *chunk, Value value) {
+  push(value);
   writeValueArray(&chunk->constants, value);
+  pop();
 
   // After we add the constant, we return the index where the constant
   // was appended so that we can locate that same constant later.
