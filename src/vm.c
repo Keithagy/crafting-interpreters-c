@@ -93,12 +93,15 @@ void initVM() {
   vm.grayStack = NULL;
   initTable(&vm.globals);
   initTable(&vm.strings);
+  vm.initString = NULL;
+  vm.initString = copyString("init", 4);
   defineNative("clock", clockNative);
 }
 
 void freeVM() {
   freeTable(&vm.globals);
   freeTable(&vm.strings);
+  vm.initString = NULL;
   freeObjects();
 }
 
@@ -122,6 +125,11 @@ static bool call(ObjClosure *closure, int argCount) {
 static bool callValue(Value callee, int argCount) {
   if (IS_OBJ(callee)) {
     switch (OBJ_TYPE(callee)) {
+    case OBJ_BOUND_METHOD: {
+      ObjBoundMethod *bound = AS_BOUND_METHOD(callee);
+      vm.stackTop[-argCount - 1] = bound->receiver;
+      return call(bound->method, argCount);
+    }
     case OBJ_NATIVE: {
       NativeFn native = AS_NATIVE(callee);
       Value result = native(argCount, vm.stackTop - argCount);
@@ -138,6 +146,13 @@ static bool callValue(Value callee, int argCount) {
                    // replaces the class object's spot on the stack, whilst
                    // keeping initializer operands where they need to be so the
                    // initializer can access them correctly
+      Value initializer;
+      if (tableGet(&klass->methods, vm.initString, &initializer)) {
+        return call(AS_CLOSURE(initializer), argCount);
+      } else if (argCount != 0) {
+        runtimeError("Expected 0 arguments but got %d.", argCount);
+        return false;
+      }
       return true;
     }
     default:
@@ -146,6 +161,17 @@ static bool callValue(Value callee, int argCount) {
   }
   runtimeError("Can only call functions and classes.");
   return false;
+}
+static bool bindMethod(ObjClass *klass, ObjString *name) {
+  Value method;
+  if (!tableGet(&klass->methods, name, &method)) {
+    runtimeError("Undefined property '%s'.", name->chars);
+    return false;
+  }
+  ObjBoundMethod *bound = newBoundMethod(peek(0), AS_CLOSURE(method));
+  pop();
+  push(OBJ_VAL(bound));
+  return true;
 }
 static ObjUpvalue *captureUpvalue(Value *local) {
   ObjUpvalue *prevUpvalue = NULL;
@@ -176,6 +202,15 @@ static void closeUpvalues(Value *last) {
     upvalue->location = &upvalue->closed;
     vm.openUpvalues = upvalue->next;
   }
+}
+static void defineMethod(ObjString *name) {
+  // The method closure is on top of the stack, above the class it will be bound
+  // to. We read those two stack slots and store the closure in the class's
+  // method table. Then we pop the closure since we're done with it.
+  Value method = peek(0);
+  ObjClass *klass = AS_CLASS(peek(1));
+  tableSet(&klass->methods, name, method);
+  pop();
 }
 static bool isFalsey(Value value) {
   return IS_NIL(value) || (IS_BOOL(value) && !AS_BOOL(value));
@@ -274,8 +309,10 @@ static InterpretResult run() {
         push(value);
         break;
       }
-      runtimeError("Undefined property '%s'.", name->chars);
-      return INTERPRET_RUNTIME_ERROR;
+      if (!bindMethod(instance->klass, name)) {
+        return INTERPRET_RUNTIME_ERROR;
+      }
+      break;
     }
     case OP_SET_PROPERTY: {
       if (!IS_INSTANCE(peek(1))) {
@@ -470,6 +507,10 @@ static InterpretResult run() {
     case OP_CLOSE_UPVALUE: {
       closeUpvalues(vm.stackTop - 1);
       pop();
+      break;
+    }
+    case OP_METHOD: {
+      defineMethod(READ_STRING());
       break;
     }
     }

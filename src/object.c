@@ -4,6 +4,7 @@
 
 #include "memory.h"
 #include "object.h"
+#include "table.h"
 #include "value.h"
 #include "vm.h"
 
@@ -21,9 +22,16 @@ static Obj *allocateObject(size_t size, ObjType type) {
 #endif /* ifdef DEBUG_LOG_GC */
   return object;
 }
+ObjBoundMethod *newBoundMethod(Value reciever, ObjClosure *method) {
+  ObjBoundMethod *bound = ALLOCATE_OBJ(ObjBoundMethod, OBJ_BOUND_METHOD);
+  bound->receiver = reciever;
+  bound->method = method;
+  return bound;
+}
 ObjClass *newClass(ObjString *name) {
   ObjClass *klass = ALLOCATE_OBJ(ObjClass, OBJ_CLASS);
   klass->name = name;
+  initTable(&klass->methods);
   return klass;
 }
 ObjClosure *newClosure(ObjFunction *function) {
@@ -140,6 +148,10 @@ void printObject(Value value) {
   }
   case OBJ_INSTANCE: {
     printf("%s instance", AS_INSTANCE(value)->klass->name->chars);
+    break;
+  }
+  case OBJ_BOUND_METHOD: {
+    printFunction(AS_BOUND_METHOD(value)->method->function);
     break;
   }
   }

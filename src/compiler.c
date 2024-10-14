@@ -53,7 +53,7 @@ typedef struct {
   bool isLocal;
 } Upvalue;
 
-typedef enum { TYPE_FUNCTION, TYPE_SCRIPT } FunctionType;
+typedef enum { TYPE_FUNCTION, TYPE_SCRIPT, TYPE_METHOD } FunctionType;
 
 typedef struct Compiler {
   struct Compiler *
@@ -67,7 +67,13 @@ typedef struct Compiler {
   int scopeDepth;
 } Compiler;
 
+typedef struct ClassCompiler {
+  struct ClassCompiler *enclosing;
+} ClassCompiler;
+
 Compiler *current = NULL;
+ClassCompiler *currentClass = NULL;
+
 Parser parser;
 Chunk *compilingChunk;
 
@@ -109,6 +115,11 @@ static void initCompiler(Compiler *compiler, FunctionType type) {
   local->name.start = "";
   local->name.length = 0;
   local->isCaptured = false;
+
+  if (type == TYPE_METHOD) {
+    local->name.start = "this";
+    local->name.length = 4;
+  }
 }
 
 static Chunk *currentChunk() { return &current->function->chunk; }
@@ -480,15 +491,62 @@ static void funDeclaration() {
   funcBody(TYPE_FUNCTION);
   defineVariable(global);
 }
+
+static void namedVariable(Token name, bool canAssign) {
+  uint8_t getOp, setOp;
+  int arg = resolveLocal(current, &name);
+  if (arg != -1) {
+    getOp = OP_GET_LOCAL;
+    setOp = OP_SET_LOCAL;
+  } else if ((arg = resolveUpValue(current, &name)) != -1) {
+    getOp = OP_GET_UPVALUE;
+    setOp = OP_SET_UPVALUE;
+  } else {
+    arg = identifierConstant(&name);
+    getOp = OP_GET_GLOBAL;
+    setOp = OP_SET_GLOBAL;
+  }
+  if (canAssign && match(TOKEN_EQUAL)) {
+    expression();
+    emitBytes(setOp, (uint8_t)arg);
+  } else {
+    emitBytes(getOp, (uint8_t)arg);
+  }
+}
+static void method() {
+  consume(TOKEN_IDENTIFIER, "Expect method name.");
+  uint8_t constant = identifierConstant(&parser.previous);
+  FunctionType type = TYPE_METHOD;
+  funcBody(type);
+  emitBytes(OP_METHOD, constant);
+}
 static void classDeclaration() {
   consume(TOKEN_IDENTIFIER, "Expect class name.");
+  Token className = parser.previous;
   uint8_t nameConstant = identifierConstant(&parser.previous);
   declareVariable();
 
   emitBytes(OP_CLASS, nameConstant);
   defineVariable(nameConstant);
+
+  ClassCompiler classCompiler;
+  classCompiler.enclosing = currentClass;
+  currentClass = &classCompiler;
+
+  // Right before compiling the class body, we generate code to load a variable
+  // with the class name onto the stack. Then we compile the methods. This means
+  // that when we execute each `OP_METHOD` instricution, the stack has the
+  // method's closure on top with the class right under it. Once we've reached
+  // the end of the methods, we no longer need the class and tell the VM to pop
+  // it off the stack.
+  namedVariable(className, false);
   consume(TOKEN_LEFT_BRACE, "Expect '{' before class body.");
+  while (!check(TOKEN_RIGHT_BRACE) && !check(TOKEN_EOF)) {
+    method();
+  }
   consume(TOKEN_RIGHT_BRACE, "Expect '}' after class body.");
+  emitByte(OP_POP);
+  currentClass = currentClass->enclosing;
 }
 static void varDeclaration() {
   uint8_t global = parseVariable("Expect variable name.");
@@ -811,29 +869,15 @@ static void string(bool canAssign) {
   emitConstant(OBJ_VAL(
       copyString(parser.previous.start + 1, parser.previous.length - 2)));
 }
-static void namedVariable(Token name, bool canAssign) {
-  uint8_t getOp, setOp;
-  int arg = resolveLocal(current, &name);
-  if (arg != -1) {
-    getOp = OP_GET_LOCAL;
-    setOp = OP_SET_LOCAL;
-  } else if ((arg = resolveUpValue(current, &name)) != -1) {
-    getOp = OP_GET_UPVALUE;
-    setOp = OP_SET_UPVALUE;
-  } else {
-    arg = identifierConstant(&name);
-    getOp = OP_GET_GLOBAL;
-    setOp = OP_SET_GLOBAL;
-  }
-  if (canAssign && match(TOKEN_EQUAL)) {
-    expression();
-    emitBytes(setOp, (uint8_t)arg);
-  } else {
-    emitBytes(getOp, (uint8_t)arg);
-  }
-}
 static void variable(bool canAssign) {
   namedVariable(parser.previous, canAssign);
+}
+static void this_(bool canAssign) {
+  if (currentClass == NULL) {
+    error("Can't use 'this' outside of a class.");
+    return;
+  }
+  variable(false);
 }
 static void grouping(bool canAssign) {
   expression();
@@ -882,7 +926,7 @@ ParseRule rules[] = {
     [TOKEN_PRINT] = {NULL, NULL, PREC_NONE},
     [TOKEN_RETURN] = {NULL, NULL, PREC_NONE},
     [TOKEN_SUPER] = {NULL, NULL, PREC_NONE},
-    [TOKEN_THIS] = {NULL, NULL, PREC_NONE},
+    [TOKEN_THIS] = {this_, NULL, PREC_NONE},
     [TOKEN_TRUE] = {literal, NULL, PREC_NONE},
     [TOKEN_VAR] = {NULL, NULL, PREC_NONE},
     [TOKEN_WHILE] = {NULL, NULL, PREC_NONE},
