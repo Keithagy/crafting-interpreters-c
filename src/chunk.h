@@ -12,6 +12,8 @@
 typedef enum {
   OP_CONSTANT, // Needs an *operand* to know which constant to load, i.e.
                // parameterizing what the instruction does.
+  OP_SET_PROPERTY,
+  OP_GET_PROPERTY,
   OP_NIL,
   OP_TRUE,
   OP_FALSE,

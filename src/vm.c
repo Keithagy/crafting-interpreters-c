@@ -260,6 +260,35 @@ static InterpretResult run() {
       push(NUMBER_VAL(-AS_NUMBER(pop())));
       break;
     }
+    case OP_GET_PROPERTY: {
+      if (!IS_INSTANCE(peek(0))) {
+        runtimeError("Only instances have properties.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
+      ObjInstance *instance = AS_INSTANCE(peek(0));
+      ObjString *name = READ_STRING();
+
+      Value value;
+      if (tableGet(&instance->fields, name, &value)) {
+        pop();
+        push(value);
+        break;
+      }
+      runtimeError("Undefined property '%s'.", name->chars);
+      return INTERPRET_RUNTIME_ERROR;
+    }
+    case OP_SET_PROPERTY: {
+      if (!IS_INSTANCE(peek(1))) {
+        runtimeError("Only instances have fields.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
+      ObjInstance *instance = AS_INSTANCE(peek(1));
+      tableSet(&instance->fields, READ_STRING(), peek(0));
+      Value value = pop();
+      pop();
+      push(value);
+      break;
+    }
     case OP_EQUAL: {
       Value b = pop();
       Value a = pop();
@@ -453,9 +482,7 @@ static InterpretResult run() {
 }
 
 InterpretResult interpret(const char *source) {
-  printf("compiling");
   ObjFunction *function = compile(source);
-  printf("compiled");
   if (function == NULL)
     return INTERPRET_COMPILE_ERROR;
   push(OBJ_VAL(function));
