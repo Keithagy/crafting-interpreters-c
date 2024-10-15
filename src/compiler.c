@@ -74,6 +74,9 @@ typedef struct Compiler {
 
 typedef struct ClassCompiler {
   struct ClassCompiler *enclosing;
+  bool hasSuperClass; // why can't we just check if `enclosing` == NULL for
+                      // superclass check? Because `enclosing` allows one to
+                      // handle nested classes, not inherited ones.
 } ClassCompiler;
 
 Compiler *current = NULL;
@@ -261,6 +264,7 @@ static void endScope() {
 
 static void expression();
 static void statement();
+static void variable(bool canAssign);
 static void declaration();
 static uint8_t makeConstant(Value value);
 static ParseRule *getRule(TokenType type);
@@ -540,6 +544,12 @@ static void method() {
   funcBody(type);
   emitBytes(OP_METHOD, constant);
 }
+static Token syntheticToken(const char *text) {
+  Token token;
+  token.start = text;
+  token.length = (int)strlen(text);
+  return token;
+}
 static void classDeclaration() {
   consume(TOKEN_IDENTIFIER, "Expect class name.");
   Token className = parser.previous;
@@ -551,7 +561,28 @@ static void classDeclaration() {
 
   ClassCompiler classCompiler;
   classCompiler.enclosing = currentClass;
+  classCompiler.hasSuperClass = false;
   currentClass = &classCompiler;
+
+  if (match(TOKEN_LESS)) {
+    consume(TOKEN_IDENTIFIER, "Expect superclass name.");
+    variable(false);
+    if (identifiersEqual(&className, &parser.previous)) {
+      error("A class can't inherit from itself.");
+    }
+
+    // Creating a new lexical scope ensures that if we declare two classes in
+    // the same scope, each has a different local slot to store its superclass.
+    // Since we always name this variable "super", if we didn't make a scope for
+    // each subclass, the variables would collide.
+    beginScope();
+    addLocal(syntheticToken("super"));
+    defineVariable(0);
+
+    namedVariable(className, false);
+    emitByte(OP_INHERIT);
+    classCompiler.hasSuperClass = true;
+  }
 
   // Right before compiling the class body, we generate code to load a variable
   // with the class name onto the stack. Then we compile the methods. This means
@@ -566,6 +597,11 @@ static void classDeclaration() {
   }
   consume(TOKEN_RIGHT_BRACE, "Expect '}' after class body.");
   emitByte(OP_POP);
+
+  if (classCompiler.hasSuperClass) {
+    endScope();
+  }
+
   currentClass = currentClass->enclosing;
 }
 static void varDeclaration() {
@@ -906,6 +942,41 @@ static void this_(bool canAssign) {
   }
   variable(false);
 }
+static void super_(bool canAssign) {
+  if (currentClass == NULL) {
+    error("Can't use 'super' outside of a class.");
+  } else if (!currentClass->hasSuperClass) {
+    error("Can't use 'super' in a class with no superclass.");
+  }
+  consume(TOKEN_DOT, "Expect '.' after 'super'.");
+  consume(TOKEN_IDENTIFIER, "Expect superclass method name.");
+
+  // Pretty different from how we compiled `this` expressions.
+  //
+  // Unlike `this`, a `super` token is not a standalone expression. Instead the
+  // dot and method name following it are inseperable. In other words, Lox
+  // doesn't really have super call expressions, it has super access expressions
+  // which you can choose to immediately invoke if you want. So, when the
+  // compiler hits a `super` token, we consume the subsequent `.` token and then
+  // look for a method name. Methods are looked up dynamically, so we use
+  // `identifierConstant()` to take the lexeme of the method name token and
+  // store it in the constant table just like we do for property access
+  // expressions.
+  uint8_t name = identifierConstant(&parser.previous);
+
+  namedVariable(syntheticToken("this"),
+                false); // load receiver onto stack so you can access the
+                        // receiver's "super" local var
+  if (match(TOKEN_LEFT_PAREN)) {
+    uint8_t argCount = argumentList();
+    namedVariable(syntheticToken("super"), false);
+    emitBytes(OP_SUPER_INVOKE, name);
+    emitByte(argCount);
+  } else {
+    namedVariable(syntheticToken("super"), false);
+    emitBytes(OP_GET_SUPER, name);
+  }
+}
 static void grouping(bool canAssign) {
   expression();
   consume(TOKEN_RIGHT_PAREN, "Expect ')' after expression.");
@@ -952,7 +1023,7 @@ ParseRule rules[] = {
     [TOKEN_OR] = {NULL, or_, PREC_NONE},
     [TOKEN_PRINT] = {NULL, NULL, PREC_NONE},
     [TOKEN_RETURN] = {NULL, NULL, PREC_NONE},
-    [TOKEN_SUPER] = {NULL, NULL, PREC_NONE},
+    [TOKEN_SUPER] = {super_, NULL, PREC_NONE},
     [TOKEN_THIS] = {this_, NULL, PREC_NONE},
     [TOKEN_TRUE] = {literal, NULL, PREC_NONE},
     [TOKEN_VAR] = {NULL, NULL, PREC_NONE},
