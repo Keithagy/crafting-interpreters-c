@@ -53,7 +53,12 @@ typedef struct {
   bool isLocal;
 } Upvalue;
 
-typedef enum { TYPE_FUNCTION, TYPE_SCRIPT, TYPE_METHOD } FunctionType;
+typedef enum {
+  TYPE_FUNCTION,
+  TYPE_SCRIPT,
+  TYPE_METHOD,
+  TYPE_INITIALIZER
+} FunctionType;
 
 typedef struct Compiler {
   struct Compiler *
@@ -116,9 +121,12 @@ static void initCompiler(Compiler *compiler, FunctionType type) {
   local->name.length = 0;
   local->isCaptured = false;
 
-  if (type == TYPE_METHOD) {
+  if (type != TYPE_FUNCTION) {
     local->name.start = "this";
     local->name.length = 4;
+  } else {
+    local->name.start = "";
+    local->name.length = 0;
   }
 }
 
@@ -211,8 +219,16 @@ static void patchJump(int offset) {
 }
 
 static void emitReturn() {
-  emitByte(OP_NIL); // this language implicitly returns nil if no return value
-                    // is specified
+  if (current->type == TYPE_INITIALIZER) {
+    // In an initializer, instead of pushing `nil` onto the stack before
+    // returning, we load slot zero, which contains the instance mapped to
+    // `this`. This function is also called when compiling a return statement
+    // without a value, so this also correctly handles cases where the user does
+    // an early return inside the initializer.
+    emitBytes(OP_GET_LOCAL, 0);
+  } else {
+    emitByte(OP_NIL);
+  }
   emitByte(OP_RETURN);
 }
 static ObjFunction *endCompiler() {
@@ -517,6 +533,10 @@ static void method() {
   consume(TOKEN_IDENTIFIER, "Expect method name.");
   uint8_t constant = identifierConstant(&parser.previous);
   FunctionType type = TYPE_METHOD;
+  if (parser.previous.length == 4 &&
+      memcmp(parser.previous.start, "init", 4) == 0) {
+    type = TYPE_INITIALIZER;
+  }
   funcBody(type);
   emitBytes(OP_METHOD, constant);
 }
@@ -653,6 +673,9 @@ static void returnStatement() {
   if (match(TOKEN_SEMICOLON)) {
     emitReturn();
   } else {
+    if (current->type == TYPE_INITIALIZER) {
+      error("Can't return a value from an initializer.");
+    }
     expression();
     consume(TOKEN_SEMICOLON, "Expect ';' after return value.");
     emitByte(OP_RETURN);
