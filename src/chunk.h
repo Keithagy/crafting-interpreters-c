@@ -39,6 +39,7 @@ typedef enum {
   OP_POP,
   OP_CLOSE_UPVALUE,
   OP_CALL,
+  OP_INVOKE,
   OP_PRINT,
   OP_CLOSURE,
   OP_RETURN,
